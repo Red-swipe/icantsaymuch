@@ -1,0 +1,112 @@
+PROJECT CONTEXT
+MentisClassWiz, a Casio fx 991EX style calculator emulator (branded MX 911). Python 3.11+ engine served locally, browser UI, KaTeX for math rendering, Playwright regression suite with 442 passing tests. This is an A level submission due Oct 15, so we are in feature freeze. No new modes. Fix bugs only. Work on a branch from the v0.9 tag and release as v0.9.1. Never move the v0.9 tag. Keep all 442 existing tests green after every change. Every fix needs its own Playwright test before moving to the next fix.
+
+Keep: MX 911 branding, yellow shift labels (#F2C230), KaTeX for fractions, integrals, derivatives.
+
+---------------------------------------------------------------
+ISSUE 1: DIGITS LOOK TACKY
+Symptom: Typed digits like 123456789 on the LCD render in a serif font with uneven heights and baselines (old style numerals), while "D Math" in the header is monospace. Looks unprofessional.
+Likely cause: The input line is falling back to a default serif font and not using lining numerals. KaTeX digits and plain text digits also look different from each other.
+Fix:
+- Pick one font stack for the entire LCD (input line, results, status text, KaTeX output where possible). Bundle the font file locally in the repo so it works offline on a teacher's machine. No CDN for fonts.
+- Apply font-variant-numeric: lining-nums tabular-nums on the LCD container and its children.
+- Make sure KaTeX digits match visually (set the KaTeX font for digits to the same family or tune size and weight so mixed content looks consistent).
+- Digits must sit on one baseline with equal heights.
+Acceptance: screenshot of 1234567890 on the input line and in a result, all same height, same baseline, same font. Playwright checks computed font family and font variant numeric on the LCD elements.
+
+---------------------------------------------------------------
+ISSUE 2: PI THEN EQUALS GIVES MathERROR, AND ERROR FONT IS WRONG
+Symptom: Pressing Shift then the pi key, then =, shows MathERROR. It should show 3.141592654. Also the MathERROR text is italic serif.
+Two separate bugs:
+a) Engine bug. The UI inserts the character π but the parser or evaluator likely only recognises "pi" or a different token. Trace the exact string sent to the engine, then map π (and e, Ans, and any other constant symbols) to numeric values in the tokenizer. Test a bare constant, constant times number, number times constant, constant inside fractions, powers and roots (pi alone, 2pi, pi squared, sqrt of pi, pi over 2).
+b) Rendering bug. Status messages (MathERROR, SyntaxERROR, Stack ERROR, Arg ERROR) are going through KaTeX math mode, which italicises letters. They must be plain text in the LCD font, right aligned on the result line, outside KaTeX.
+Acceptance: pi = shows 3.141592654. 2pi = shows 6.283185307. Error text is upright, same font as other LCD text. Playwright tests for both.
+
+---------------------------------------------------------------
+ISSUE 3: FRACTION DENOMINATOR DIGITS MISSING
+Symptom: In a fraction with 96 on top, the denominator shows only part of the digits typed (e.g. 595312 appears, but not all digits that were entered). Roughly half the denominator digits are not displayed.
+Debug order:
+1. Type a known sequence into the denominator, then read the internal expression model (not the DOM). Does the model contain every digit?
+2. If the model is missing digits: the key handler is dropping or overwriting input when the cursor is inside the denominator slot. Fix the cursor and insertion logic for that slot.
+3. If the model is complete but the DOM is not: it is a rendering or clipping bug (overflow hidden, fixed width on the fraction, KaTeX re render losing nodes, cursor element replacing text). Fix the layout so the fraction grows to fit its content.
+Also test: long numerators, long denominators, nested fractions, mixed numbers, fraction inside sqrt, fraction after a power.
+Acceptance: typing 1234567890 into numerator and denominator displays all ten digits in each. Playwright compares typed digits against rendered text.
+
+---------------------------------------------------------------
+ISSUE 4: TINY SCROLLBAR, AND DEL DELETES THE WHOLE EQUATION
+Symptom A: A small native horizontal scrollbar appears under the expression when it is wider than the LCD. Looks ugly and unlike a real calculator.
+Fix A: Hide it with scrollbar-width: none and ::-webkit-scrollbar { display: none }. Keep overflow scrolling working. Auto scroll horizontally so the cursor is always visible after every key press. Show small left and right arrow indicators at the edges of the LCD only when there is hidden content in that direction, like a real calculator.
+Symptom B: Pressing DEL wipes the entire expression. It must work like backspace, and AC clears everything.
+Fix B: DEL removes one element before the cursor, and it must be structure aware:
+- Deleting a digit or operator removes just that.
+- Deleting at the edge of a structure (fraction, sqrt, power, integral, derivative, parentheses) should step into or dissolve the structure sensibly, not destroy everything. For example, backspace on an empty denominator removes the fraction and keeps the numerator.
+- When the cursor is at the very start, DEL does nothing.
+- Shift plus DEL is INS (toggle insert mode), as labelled on the key.
+- AC clears the entire expression and result.
+Acceptance: type 123, press DEL, screen shows 12. Type a fraction with content, press DEL repeatedly, it unwinds piece by piece. AC clears all. Playwright tests for each.
+
+---------------------------------------------------------------
+ISSUE 5: LINEAR EQUATION WITH ONE VARIABLE (e.g. 9X+3=30)
+Symptom: Typing 9X+3=30 and pressing equals gives MathERROR. We want it to solve for X.
+Note: on the real fx 991EX this is done with SOLVE, not plain equals. Shift plus CALC is SOLVE (already printed on our keyboard, so this is fixing a labelled key, not a new mode). X is typed with Alpha, and the equals sign inside an equation is Alpha plus CALC.
+Implementation:
+- Alpha plus CALC inserts the equals sign into the expression.
+- Shift plus CALC (SOLVE) takes the entered equation, asks for a starting guess for X (default 0), then solves numerically (Newton, falling back to secant or bisection) and displays X = value on one line and L minus R = value on the next (should be 0 or tiny).
+- Linear cases should be exact (9X+3=30 gives X = 3). If the answer is not an integer, show exact fraction form, and S<=>D toggles decimal.
+- Handle no solution and infinite solutions cleanly (Math ERROR for no solution, never crash).
+- Support any variable letter that the keyboard supports with Alpha, at minimum X.
+Acceptance: 9X+3=30 then SOLVE then guess then X = 3, L minus R = 0. 2X+1=4 gives X = 3/2, S<=>D gives 1.5. Playwright tests.
+
+---------------------------------------------------------------
+ISSUE 6: POLYNOMIAL SOLVER SCREEN FLOW (Menu > Equation / Func > Polynomial)
+Symptom: Currently shows a list like "1. 2  2." which is wrong. Should match the real calculator flow.
+Required flow:
+Screen 1, degree prompt only, no list:
+   Degree?
+   2~4
+   User types 2, 3 or 4 and presses =.
+Screen 2, coefficient entry, one coefficient per step, moving with = or arrow keys:
+   ____x^2 + ____x + ____ 
+   (for degree 3 and 4, show the matching number of terms and scroll if needed)
+Screen 3, results (after pressing =):
+   ax^2 + bx + c = 0 (with the real coefficient values shown)
+   x1 =
+                       value
+   x2 =
+                       value
+   Arrow down to see more screens.
+Screen 4 (degree 2 only), extremum:
+   min of y = ax^2 + bx + c    (use "max of" when a is negative)
+   x =
+                       value
+   then
+   min of y = ax^2 + bx + c
+   y =
+                       value
+Rules:
+- Degree 3 and 4 show roots only, no min or max screen.
+- If a root is not an integer, display exact form (fraction or surd) first. S<=>D toggles decimal.
+- Negative discriminant: show complex roots in a+bi form, consistently, no crash.
+- Repeated roots display correctly (x1 = x2).
+- a = 0 must be rejected as invalid.
+- Use proper KaTeX or consistent layout for exponents so it looks like the calculator.
+Acceptance: x^2 minus 5x + 6 gives x1 = 3, x2 = 2, min of y at x = 5/2, y = minus 1/4. 2x^2 + 3x + 1 style non integers show fractions. 1x^2 + 0x + 1 shows complex roots. Playwright tests for each.
+
+---------------------------------------------------------------
+ISSUE 7: VERIFY EVERY SHIFT AND MENU OPTION WORKS
+Do not test by eye. Build an automated Playwright matrix.
+- For every physical key, press it plain, with Shift, and with Alpha. Record: did something happen (display or model changed), did it throw a console error, does it match the label printed on the key.
+- Fail the test for any labelled function that does nothing or throws.
+- Walk every Menu mode (Calculate, Complex, Base N, Matrix, Vector, Statistics, Distribution, Spreadsheet, Table, Equation/Func, Inequality, Ratio, and any others present). Enter each, run one valid calculation, exit cleanly.
+- Walk every Setup option (angle unit, number format, fraction format, display settings, etc.) and confirm the setting changes behaviour.
+- Output a results table: key or mode, modifier, expected, actual, pass or fail. That table becomes the bug list. Do not fix more than the issues above without approval, report only.
+- Keep existing 442 tests green.
+
+---------------------------------------------------------------
+RELEASE STEPS (after all fixes)
+1. All new and old tests pass.
+2. Commit on v0.9.1 branch, merge, tag v0.9.1.
+3. Make a fresh clone of v0.9.1, hard refresh (Ctrl+Shift+R), run via START.bat with Python 3.11+, capture screenshots: digit and fraction, integral and derivative, MX 911 header, pi equals result, polynomial result screens, SOLVE result.
+4. Confirm the teacher has a working Python 3.11+ environment.
+5. Package with git archive zip plus START.bat. No PyInstaller.
+Target finish: Oct 12, leaving 3 days of buffer before Oct 15.
