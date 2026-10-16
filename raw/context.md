@@ -413,3 +413,6 @@ After the gate: merge with **Create a merge commit**, then tag `v0.1.1` and push
 - After every phase append to `E:\A.G\AUDIT_PROGRESS.md`: done, verified, next.
 - If budget runs low: stop and report. Do not rush.
 - Final answer format: A root cause with evidence, B 46 case table, C path divergences, D commits, E tests and counts versus baseline, F risks and UNTESTED items.
+- work and edit files only in here: E:\A.G\casio_mvp 
+if they wanna see the version we shipped to mam huma check here : X:\MentisClassWiz_v0.1
+do all fixes and commits on this branch: https://github.com/Red-swipe/mvp/tree/release_fix_v0_1_1-9849905938563262561?tab=readme-ov-file [change branch name to "Release_fix_v0.12"]
